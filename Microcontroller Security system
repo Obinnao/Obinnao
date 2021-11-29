@@ -1,0 +1,187 @@
+The complete program code used in the design of the project is given below along with comments on it
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <Keypad.h>
+#include <SoftwareSerial.h>
+
+boolean state, laststate;
+
+//constants pins assigned for LEDs
+int greenLED = 2;
+int redLED = 3;
+float Hottemp = 26;//setting the highest temperature degree
+float coldtemp = 20;//setting the cold temperature degree
+float sensor = 0;//specifying the sensor pin analog pin 0
+float celsius = 0;
+float voltage = 0;
+
+//set our code
+char* ourCode = "1234";//specifies what our code is that will be used to unlock the door
+int currentPosition = 0;
+
+//define the number of rows and column of the keypad
+const byte rows = 4;
+const byte cols = 4;
+
+//specifying how the keypad layout is arranged
+char keys[rows][cols] = {
+{'1','2','3','A'},
+{'4','5','6','B'},
+{'7','8','9','C'},
+{'*','0','#','D'}
+};
+
+//Assigning the pins at the keypad is connected to
+byte rowPins[rows] = {13,12,11,10};
+byte colPins[cols] = {9,8,7,6};
+//creating an instant of the various library files used
+Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, rows, cols);
+SoftwareSerial gsm(4,5);// creating an instant of the software serial and the pins the gsm module is connected to
+LiquidCrystal_I2C lcd(0x3F,2, 1, 0, 4, 5, 6, 7, 3, POSITIVE); // set the LCD address to 0x3F for the 20 by 4
+
+//writing the our main program that is run once
+void setup()
+{
+gsm.begin(9600);//sets the communication speed for the gsm is 9600 baudrate
+Serial.begin(9600);//sets the communication rate for the bluetooth
+gsm.println("AT");//used to test the communication between the microcontroller and gsm module
+delay(1000);
+lcd.begin(20,4);// initialize the lcd and specify its size
+lcd.clear();//remove any random data stored in memory
+lcd.setCursor(6,0);//set the cursor at position 6 of line 1 of the LCD
+lcd.print("Welcome"); // Print a message to the LCD.
+delay(500);//wait for half a sec
+displayCodeEntryScreen();//call the entry code function
+//setup pins as output pins and turn off both LEDs
+pinMode(redLED, OUTPUT);
+pinMode(greenLED, OUTPUT);
+digitalWrite(redLED, LOW);
+digitalWrite(greenLED, LOW);
+pinMode (2,INPUT_PULLUP);//the pin at which the door sensor is connected
+state = digitalRead(2);//check the state of the sensor
+laststate = state;
+}
+
+//writing the loop that will run continuously
+void loop()
+{
+//read the temperature sensor and convert the result to celsius
+sensor = analogRead(0);
+voltage = (sensor *5000)/1024;//converting the sensor value to millivolt
+voltage = voltage - 500; //removing the voltage offset
+celsius = voltage/10;//converting the millivolt to celsius
+lcd.setCursor(0,3);
+lcd.print("Temp is ");
+lcd.setCursor(11,3);
+lcd.print(celsius);
+if (celsius < coldtemp)
+{
+Serial.println("Room's cold");
+}
+else if(celsius > coldtemp && celsius <= Hottemp){
+Serial.println("Temperature is okay");
+}
+else if(celsius > Hottemp){
+Serial.println("Room is Hot");//prints the condition of the room on the serial monitor
+//more line of code can be added to make decisions base on the temperature sensor
+}
+while(gsm.available()){//check that the gsm is connected
+Serial.write(gsm.read());
+}
+laststate = state;
+state = digitalRead(2);
+if (state != laststate){
+sendSMS();//call the function for sending an sms
+}
+delay(500);
+int l;
+char key = keypad.getKey();//used to get the keys pressed by the user
+if (int(key) != 0) {
+lcd.setCursor(14,3);
+lcd.print(" ");
+lcd.setCursor(14,3);
+for (l=0; l<=currentPosition; ++l)
+{
+lcd.print("*");
+}
+if (key == ourCode[currentPosition])//check the position of the password and increment accordingly
+{
+++currentPosition;
+if (currentPosition == 4)
+{
+unlockDoor();
+currentPosition = 0;
+}
+} else {
+invalidCode();
+currentPosition = 0;
+}
+}
+}
+
+//The function that is invoke when the user puts in the wrong code
+void invalidCode()
+{
+digitalWrite(redLED, HIGH);
+clearScreen();
+lcd.setCursor(0,0);
+lcd.print("***************");
+lcd.setCursor(0,1);
+lcd.print("** ACCESS DENIED! **");//message to display
+lcd.setCursor(0,2);
+lcd.print(" CODE INVALID ");//message to display
+delay(5000);//wait for 5 seconds
+digitalWrite(redLED, LOW);//turn off the indicator
+displayCodeEntryScreen();//clear the screen
+}
+
+//function that unlock the door when the accurate password is typed
+void unlockDoor()
+{
+digitalWrite(greenLED, HIGH);//turn on the LED to show that the door is unlocked
+clearScreen();
+lcd.setCursor(0,0);
+lcd.print("***************");//print the message on screen
+lcd.setCursor(0,1);//set the cursor on position 0 of the second line
+lcd.print("* ACCESS GRANTED *");//print this message to screen
+lcd.setCursor(0,2);
+lcd.print("***************");
+delay(10000);//wait for 10sec before turning off the
+digitalWrite(greenLED, LOW);//lock the system back on
+displayCodeEntryScreen();
+}
+
+//calls the function that allow user to type in password
+void displayCodeEntryScreen()
+{
+clearScreen();//clear the message in memory
+lcd.setCursor(0,0);
+lcd.print("Password");//display this message on the screen
+lcd.setCursor(0,1);
+lcd.print("Enter Code:");//display this message on the screen
+}
+
+//Code use to set the screen back to the default stage after password has been typed
+void clearScreen()
+{
+lcd.setCursor(0,0);
+lcd.print(" ");
+lcd.setCursor(0,1);
+lcd.print(" ");
+lcd.setCursor(0,2);
+lcd.print(" ");
+}
+
+//writing the function used to send an sms
+void sendSMS(){
+Serial.print("Door is ");
+Serial.println(state ? "opened" : "closed");//used to monitor the condition at which the door is
+gsm.println("AT+CMGF=1");//used to check if the gsm module supports sms mode
+delay(500);
+gsm.println("AT+CMGS=\"+447766647385\"");//the number at which the message is sent to
+delay(500);
+gsm.print("Door is ");
+gsm.println(state ? "opened" : "closed");//check if any of the state is true and send an sms
+gsm.write(0x1a);//ctrl z is used at the end of every AT commands
+delay(500);
+}
